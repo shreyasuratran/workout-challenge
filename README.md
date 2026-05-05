@@ -1,6 +1,6 @@
 # Workout Challenge
 
-A private mobile-first workout challenge app for Shreya, Aditi, and Thaanvi.
+A private mobile-first workout challenge app for Shreya and friends
 
 Built with React, Vite, TypeScript, Tailwind CSS, Supabase, date-fns, and lucide-react.
 

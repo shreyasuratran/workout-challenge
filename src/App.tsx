@@ -288,6 +288,7 @@ const applyExifTransform = (
   orientation: number,
   canvasWidth: number,
   canvasHeight: number,
+  shouldFlipHorizontally: boolean,
 ) => {
   switch (orientation) {
     case 2:
@@ -314,9 +315,14 @@ const applyExifTransform = (
     default:
       break;
   }
+
+  if (shouldFlipHorizontally) {
+    context.translate(canvasWidth, 0);
+    context.scale(-1, 1);
+  }
 };
 
-const compressProofImage = async (file: File) => {
+const compressProofImage = async (file: File, shouldFlipHorizontally = false) => {
   const orientation = await readExifOrientation(file);
   const image = await loadImageSource(file);
   const rawWidth = image.width;
@@ -339,7 +345,7 @@ const compressProofImage = async (file: File) => {
     throw new Error('Could not prepare image');
   }
 
-  applyExifTransform(context, orientation, canvasWidth, canvasHeight);
+  applyExifTransform(context, orientation, canvasWidth, canvasHeight, shouldFlipHorizontally);
   context.drawImage(image, 0, 0, drawWidth, drawHeight);
   if ('close' in image) image.close();
 
@@ -369,6 +375,9 @@ function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
+  const [processedProofBlob, setProcessedProofBlob] = useState<Blob | null>(null);
+  const [isProofFlipped, setIsProofFlipped] = useState(false);
+  const [isProcessingProof, setIsProcessingProof] = useState(false);
   const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -506,23 +515,55 @@ function App() {
     setView('home');
   };
 
-  const selectProofFile = (file: File | null) => {
+  const setProcessedProofPreview = (blob: Blob | null) => {
     if (proofPreviewUrl) {
       URL.revokeObjectURL(proofPreviewUrl);
     }
 
+    setProcessedProofBlob(blob);
+    setProofPreviewUrl(blob ? URL.createObjectURL(blob) : null);
+  };
+
+  const processProofFile = async (file: File, shouldFlipHorizontally: boolean) => {
+    setIsProcessingProof(true);
+    try {
+      const blob = await compressProofImage(file, shouldFlipHorizontally);
+      setProcessedProofPreview(blob);
+    } catch {
+      setError('Could not prepare that photo. You can still check in without it.');
+      setProcessedProofPreview(null);
+    } finally {
+      setIsProcessingProof(false);
+    }
+  };
+
+  const selectProofFile = (file: File | null) => {
     setProofFile(file);
-    setProofPreviewUrl(file ? URL.createObjectURL(file) : null);
+    setIsProofFlipped(false);
+
+    if (!file) {
+      setProcessedProofPreview(null);
+      return;
+    }
+
+    void processProofFile(file, false);
+  };
+
+  const flipProofPhoto = () => {
+    if (!proofFile || isProcessingProof) return;
+
+    const nextFlip = !isProofFlipped;
+    setIsProofFlipped(nextFlip);
+    void processProofFile(proofFile, nextFlip);
   };
 
   const uploadProofPhoto = async (profileId: string): Promise<ProofPhoto | null> => {
-    if (!supabase || !proofFile) return null;
+    if (!supabase || !processedProofBlob) return null;
 
     try {
-      const compressedPhoto = await compressProofImage(proofFile);
       const timestamp = Date.now();
       const path = `proofs/${profileId}/${today}-${timestamp}.jpg`;
-      const uploadResult = await supabase.storage.from(PROOF_BUCKET).upload(path, compressedPhoto, {
+      const uploadResult = await supabase.storage.from(PROOF_BUCKET).upload(path, processedProofBlob, {
         cacheControl: '3600',
         contentType: 'image/jpeg',
         upsert: false,
@@ -581,6 +622,7 @@ function App() {
       setCheckIns((existing) => [result.data as CheckIn, ...existing]);
       setNoteText('');
       selectProofFile(null);
+      setIsProofFlipped(false);
     }
     setIsSaving(false);
   };
@@ -697,8 +739,11 @@ function App() {
                 checkInsByProfile={checkInsByProfile}
                 hasCheckedInToday={hasCheckedInToday}
                 isSaving={isSaving}
+                isProcessingProof={isProcessingProof}
+                isProofFlipped={isProofFlipped}
                 noteText={noteText}
                 onCheckIn={checkInToday}
+                onFlipProofPhoto={flipProofPhoto}
                 onNoteChange={setNoteText}
                 onPhotoPreview={setPhotoPreviewUrl}
                 onProofFileChange={selectProofFile}
@@ -799,8 +844,11 @@ function HomeView({
   checkInsByProfile,
   hasCheckedInToday,
   isSaving,
+  isProcessingProof,
+  isProofFlipped,
   noteText,
   onCheckIn,
+  onFlipProofPhoto,
   onNoteChange,
   onPhotoPreview,
   onProofFileChange,
@@ -815,8 +863,11 @@ function HomeView({
   checkInsByProfile: ChallengeStat[];
   hasCheckedInToday: boolean;
   isSaving: boolean;
+  isProcessingProof: boolean;
+  isProofFlipped: boolean;
   noteText: string;
   onCheckIn: () => void;
+  onFlipProofPhoto: () => void;
   onNoteChange: (note: string) => void;
   onPhotoPreview: (photoUrl: string) => void;
   onProofFileChange: (file: File | null) => void;
@@ -873,23 +924,40 @@ function HomeView({
             </label>
             <div className="rounded-2xl border border-pink-100 bg-pink-50/70 p-2.5">
               <p className="text-xs font-bold text-slate-500">Proof photos are optional and may disappear after about 48 hours.</p>
+              <p className="mt-1 text-xs font-semibold text-slate-400">Preview shows the exact processed image that will upload.</p>
               {proofPreviewUrl ? (
                 <div className="mt-3 flex items-center gap-3">
                   <button
-                    className="h-14 w-14 overflow-hidden rounded-2xl border border-white"
+                    className="h-20 w-20 overflow-hidden rounded-2xl border border-white"
                     onClick={() => onPhotoPreview(proofPreviewUrl)}
                     type="button"
                   >
                     <img alt="Selected proof preview" className="h-full w-full object-cover" src={proofPreviewUrl} />
                   </button>
-                  <button
-                    className="flex min-h-10 items-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700"
-                    onClick={() => onProofFileChange(null)}
-                    type="button"
-                  >
-                    <X className="h-4 w-4" />
-                    Remove
-                  </button>
+                  <div className="grid min-w-0 flex-1 gap-2">
+                    <button
+                      className="flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700 disabled:opacity-60"
+                      disabled={isProcessingProof}
+                      onClick={onFlipProofPhoto}
+                      type="button"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      {isProofFlipped ? 'Undo flip' : 'Flip photo'}
+                    </button>
+                    <button
+                      className="flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700"
+                      onClick={() => onProofFileChange(null)}
+                      type="button"
+                    >
+                      <X className="h-4 w-4" />
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : isProcessingProof ? (
+                <div className="mt-2 flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Preparing preview
                 </div>
               ) : (
                 <label className="mt-2 flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-950 shadow-sm">
@@ -913,7 +981,7 @@ function HomeView({
             hasCheckedInToday ? 'bg-slate-950 text-white' : `${theme.strong} text-white`
           } px-4 py-3.5 text-base font-black shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70`}
           onClick={hasCheckedInToday ? onUndo : onCheckIn}
-          disabled={isSaving}
+          disabled={isSaving || isProcessingProof}
         >
           {isSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : hasCheckedInToday ? <RotateCcw className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
           {hasCheckedInToday ? 'Undo today' : 'Log today’s win'}

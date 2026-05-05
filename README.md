@@ -6,7 +6,7 @@ Built with React, Vite, TypeScript, Tailwind CSS, Supabase, date-fns, and lucide
 
 ## Features
 
-- Profile picker for Shreya, Aditi, and Thaanvi
+- Profile picker for personal friends
 - Selected profile saved in `localStorage`
 - Daily workout check-in
 - One check-in per person per day

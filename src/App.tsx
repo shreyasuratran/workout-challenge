@@ -288,26 +288,13 @@ const applyExifTransform = (
   orientation: number,
   canvasWidth: number,
   canvasHeight: number,
-  shouldFlipHorizontally: boolean,
 ) => {
   switch (orientation) {
-    case 2:
-      context.transform(-1, 0, 0, 1, canvasWidth, 0);
-      break;
     case 3:
       context.transform(-1, 0, 0, -1, canvasWidth, canvasHeight);
       break;
-    case 4:
-      context.transform(1, 0, 0, -1, 0, canvasHeight);
-      break;
-    case 5:
-      context.transform(0, 1, 1, 0, 0, 0);
-      break;
     case 6:
       context.transform(0, 1, -1, 0, canvasWidth, 0);
-      break;
-    case 7:
-      context.transform(0, -1, -1, 0, canvasWidth, canvasHeight);
       break;
     case 8:
       context.transform(0, -1, 1, 0, 0, canvasHeight);
@@ -315,15 +302,25 @@ const applyExifTransform = (
     default:
       break;
   }
+};
 
-  if (shouldFlipHorizontally) {
-    context.translate(canvasWidth, 0);
-    context.scale(-1, 1);
+const removeExifMirroring = (orientation: number) => {
+  switch (orientation) {
+    case 2:
+      return 1;
+    case 4:
+      return 3;
+    case 5:
+      return 6;
+    case 7:
+      return 8;
+    default:
+      return orientation;
   }
 };
 
 const compressProofImage = async (file: File, shouldFlipHorizontally = false) => {
-  const orientation = await readExifOrientation(file);
+  const orientation = removeExifMirroring(await readExifOrientation(file));
   const image = await loadImageSource(file);
   const rawWidth = image.width;
   const rawHeight = image.height;
@@ -335,19 +332,35 @@ const compressProofImage = async (file: File, shouldFlipHorizontally = false) =>
   const canvasHeight = Math.round(orientedHeight * scale);
   const drawWidth = Math.round(rawWidth * scale);
   const drawHeight = Math.round(rawHeight * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
-  const context = canvas.getContext('2d');
+  const orientedCanvas = document.createElement('canvas');
+  orientedCanvas.width = canvasWidth;
+  orientedCanvas.height = canvasHeight;
+  const context = orientedCanvas.getContext('2d');
 
   if (!context) {
     if ('close' in image) image.close();
     throw new Error('Could not prepare image');
   }
 
-  applyExifTransform(context, orientation, canvasWidth, canvasHeight, shouldFlipHorizontally);
+  applyExifTransform(context, orientation, canvasWidth, canvasHeight);
   context.drawImage(image, 0, 0, drawWidth, drawHeight);
   if ('close' in image) image.close();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+  const outputContext = canvas.getContext('2d');
+
+  if (!outputContext) {
+    throw new Error('Could not prepare image');
+  }
+
+  if (shouldFlipHorizontally) {
+    outputContext.translate(canvasWidth, 0);
+    outputContext.scale(-1, 1);
+  }
+
+  outputContext.drawImage(orientedCanvas, 0, 0);
 
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(

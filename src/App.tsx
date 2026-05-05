@@ -210,39 +210,68 @@ const vacationStatusText = (profile: Profile) => {
   return `${profile.name} is on vacation${until} 🌴`;
 };
 
-const compressProofImage = (file: File) => {
-  return new Promise<Blob>((resolve, reject) => {
+const readExifOrientation = async (file: File) => {
+  try {
+    const view = new DataView(await file.arrayBuffer());
+    if (view.getUint16(0, false) !== 0xffd8) return 1;
+
+    let offset = 2;
+    while (offset < view.byteLength) {
+      const marker = view.getUint16(offset, false);
+      offset += 2;
+
+      if (marker === 0xffda || marker === 0xffd9) break;
+      const segmentLength = view.getUint16(offset, false);
+      if (segmentLength < 2) break;
+
+      if (marker === 0xffe1) {
+        const segmentStart = offset + 2;
+        const hasExifHeader =
+          view.getUint32(segmentStart, false) === 0x45786966 && view.getUint16(segmentStart + 4, false) === 0;
+
+        if (hasExifHeader) {
+          const tiffOffset = segmentStart + 6;
+          const byteOrder = view.getUint16(tiffOffset, false);
+          const littleEndian = byteOrder === 0x4949;
+          const firstIfdOffset = view.getUint32(tiffOffset + 4, littleEndian);
+          const entriesOffset = tiffOffset + firstIfdOffset;
+          const entries = view.getUint16(entriesOffset, littleEndian);
+
+          for (let index = 0; index < entries; index += 1) {
+            const entryOffset = entriesOffset + 2 + index * 12;
+            const tag = view.getUint16(entryOffset, littleEndian);
+            if (tag === 0x0112) {
+              return view.getUint16(entryOffset + 8, littleEndian);
+            }
+          }
+        }
+      }
+
+      offset += segmentLength;
+    }
+  } catch {
+    return 1;
+  }
+
+  return 1;
+};
+
+const loadImageSource = async (file: File) => {
+  if ('createImageBitmap' in window) {
+    try {
+      return await createImageBitmap(file, { imageOrientation: 'none' });
+    } catch {
+      // Fall back to HTMLImageElement below for older mobile browsers.
+    }
+  }
+
+  return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = document.createElement('img');
     const objectUrl = URL.createObjectURL(file);
 
     image.onload = () => {
-      const scale = Math.min(1200 / image.width, 1);
-      const width = Math.round(image.width * scale);
-      const height = Math.round(image.height * scale);
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-
-      if (!context) {
-        URL.revokeObjectURL(objectUrl);
-        reject(new Error('Could not prepare image'));
-        return;
-      }
-
-      context.drawImage(image, 0, 0, width, height);
-      canvas.toBlob(
-        (blob) => {
-          URL.revokeObjectURL(objectUrl);
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('Could not compress image'));
-          }
-        },
-        'image/jpeg',
-        0.82,
-      );
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
     };
 
     image.onerror = () => {
@@ -251,6 +280,81 @@ const compressProofImage = (file: File) => {
     };
 
     image.src = objectUrl;
+  });
+};
+
+const applyExifTransform = (
+  context: CanvasRenderingContext2D,
+  orientation: number,
+  canvasWidth: number,
+  canvasHeight: number,
+) => {
+  switch (orientation) {
+    case 2:
+      context.transform(-1, 0, 0, 1, canvasWidth, 0);
+      break;
+    case 3:
+      context.transform(-1, 0, 0, -1, canvasWidth, canvasHeight);
+      break;
+    case 4:
+      context.transform(1, 0, 0, -1, 0, canvasHeight);
+      break;
+    case 5:
+      context.transform(0, 1, 1, 0, 0, 0);
+      break;
+    case 6:
+      context.transform(0, 1, -1, 0, canvasWidth, 0);
+      break;
+    case 7:
+      context.transform(0, -1, -1, 0, canvasWidth, canvasHeight);
+      break;
+    case 8:
+      context.transform(0, -1, 1, 0, 0, canvasHeight);
+      break;
+    default:
+      break;
+  }
+};
+
+const compressProofImage = async (file: File) => {
+  const orientation = await readExifOrientation(file);
+  const image = await loadImageSource(file);
+  const rawWidth = image.width;
+  const rawHeight = image.height;
+  const swapsDimensions = orientation >= 5 && orientation <= 8;
+  const orientedWidth = swapsDimensions ? rawHeight : rawWidth;
+  const orientedHeight = swapsDimensions ? rawWidth : rawHeight;
+  const scale = Math.min(1200 / orientedWidth, 1);
+  const canvasWidth = Math.round(orientedWidth * scale);
+  const canvasHeight = Math.round(orientedHeight * scale);
+  const drawWidth = Math.round(rawWidth * scale);
+  const drawHeight = Math.round(rawHeight * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    if ('close' in image) image.close();
+    throw new Error('Could not prepare image');
+  }
+
+  applyExifTransform(context, orientation, canvasWidth, canvasHeight);
+  context.drawImage(image, 0, 0, drawWidth, drawHeight);
+  if ('close' in image) image.close();
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Could not compress image'));
+        }
+      },
+      'image/jpeg',
+      0.78,
+    );
   });
 };
 

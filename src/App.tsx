@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays,
   Check,
+  ChevronLeft,
   ChevronRight,
   Crown,
   Gift,
@@ -13,7 +14,22 @@ import {
   Sparkles,
   Trophy,
 } from 'lucide-react';
-import { differenceInCalendarDays, format, isWeekend, parseISO, subDays } from 'date-fns';
+import {
+  addMonths,
+  differenceInCalendarDays,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameDay,
+  isSameMonth,
+  isWeekend,
+  parseISO,
+  startOfMonth,
+  startOfWeek,
+  subDays,
+  subMonths,
+} from 'date-fns';
 import { currentStreak, isRecentFirst, todayKey, weekRange } from './lib/dates';
 import { hasSupabaseConfig, supabase } from './lib/supabase';
 import type { CheckIn, Profile, View } from './types';
@@ -197,7 +213,7 @@ function App() {
     setIsLoading(true);
     setError(null);
 
-    const since = subDays(new Date(), 70);
+    const since = subDays(new Date(), 370);
     const [profilesResult, checkInsResult] = await Promise.all([
       supabase.from('profiles').select('*').order('name'),
       supabase
@@ -394,7 +410,7 @@ function App() {
               />
             ) : null}
             {view === 'leaderboard' ? <LeaderboardView leaderboard={leaderboard} week={week} /> : null}
-            {view === 'history' ? <HistoryView checkIns={recentCheckIns} profiles={profiles} /> : null}
+            {view === 'history' ? <HistoryView checkIns={checkIns} profiles={profiles} selectedProfile={selectedProfile} /> : null}
             {view === 'settings' ? (
               <SettingsView
                 profiles={profiles}
@@ -603,13 +619,131 @@ function LeaderboardView({ leaderboard, week }: { leaderboard: ChallengeStat[]; 
   );
 }
 
-function HistoryView({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Profile[] }) {
+function HistoryView({
+  checkIns,
+  profiles,
+  selectedProfile,
+}: {
+  checkIns: CheckIn[];
+  profiles: Profile[];
+  selectedProfile: Profile;
+}) {
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const theme = getTheme(selectedProfile);
+  const selectedUserCheckIns = useMemo(() => {
+    return checkIns.filter((checkIn) => checkIn.profile_id === selectedProfile.id);
+  }, [checkIns, selectedProfile.id]);
+  const recentActivity = useMemo(() => {
+    return [...checkIns]
+      .sort((a, b) => {
+        const dateOrder = isRecentFirst(a.check_in_date, b.check_in_date);
+        if (dateOrder !== 0) return dateOrder;
+        return b.created_at.localeCompare(a.created_at);
+      })
+      .slice(0, 24);
+  }, [checkIns]);
+  const selectedCheckIn = selectedUserCheckIns.find((checkIn) => isSameDay(parseISO(checkIn.check_in_date), selectedDate));
+  const monthDays = useMemo(() => {
+    return eachDayOfInterval({
+      start: startOfWeek(startOfMonth(visibleMonth), { weekStartsOn: 0 }),
+      end: endOfWeek(endOfMonth(visibleMonth), { weekStartsOn: 0 }),
+    });
+  }, [visibleMonth]);
+
   return (
-    <section>
-      <p className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Recent Wins</p>
-      <h2 className="text-3xl font-black">Activity feed</h2>
-      <div className="mt-4 grid gap-3">
-        {checkIns.map((checkIn) => {
+    <section className="grid gap-5">
+      <div>
+        <p className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Recent Wins</p>
+        <h2 className="text-3xl font-black">Workout history</h2>
+      </div>
+
+      <div className="rounded-[2rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <AvatarBubble profile={selectedProfile} size="sm" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-slate-400">Calendar</p>
+              <h3 className="text-xl font-black">{format(visibleMonth, 'MMMM yyyy')}</h3>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-50 text-slate-600 shadow-sm"
+              onClick={() => setVisibleMonth((month) => subMonths(month, 1))}
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-50 text-slate-600 shadow-sm"
+              onClick={() => setVisibleMonth((month) => addMonths(month, 1))}
+              aria-label="Next month"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-7 gap-1 text-center text-[11px] font-black uppercase tracking-[0.08em] text-slate-400">
+          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+            <span key={`${day}-${index}`}>{day}</span>
+          ))}
+        </div>
+
+        <div className="mt-2 grid grid-cols-7 gap-1">
+          {monthDays.map((day) => {
+            const dayKey = format(day, 'yyyy-MM-dd');
+            const checkIn = selectedUserCheckIns.find((item) => item.check_in_date === dayKey);
+            const hasNote = Boolean(checkIn?.note_text?.trim());
+            const isCurrentMonth = isSameMonth(day, visibleMonth);
+            const isSelected = isSameDay(day, selectedDate);
+            return (
+              <button
+                key={dayKey}
+                className={`relative grid aspect-square min-h-10 place-items-center rounded-2xl text-sm font-black transition ${
+                  isSelected ? 'bg-slate-950 text-white shadow-sm' : isCurrentMonth ? 'bg-white text-slate-700' : 'bg-transparent text-slate-300'
+                }`}
+                onClick={() => setSelectedDate(day)}
+                aria-label={`${format(day, 'MMMM d')}${checkIn ? ', checked in' : ', no check-in'}`}
+              >
+                <span
+                  className={`grid h-8 w-8 place-items-center rounded-full ${
+                    checkIn && !isSelected ? `${theme.strong} text-white` : ''
+                  }`}
+                >
+                  {checkIn ? <Check className="h-4 w-4" /> : format(day, 'd')}
+                </span>
+                {hasNote ? (
+                  <span
+                    className={`absolute bottom-1 h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-white' : theme.strong}`}
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className={`mt-4 rounded-[1.5rem] ${theme.soft} p-4`}>
+          <p className={`text-xs font-black uppercase tracking-[0.14em] ${theme.text}`}>
+            {format(selectedDate, 'EEEE, MMM d')}
+          </p>
+          <p className="mt-1 font-black text-slate-950">
+            {selectedCheckIn ? `${selectedProfile.name} logged a workout.` : 'No workout logged for this day.'}
+          </p>
+          {selectedCheckIn?.note_text ? (
+            <p className="mt-2 rounded-2xl bg-white/80 px-3 py-2 text-sm font-semibold text-slate-600">
+              “{selectedCheckIn.note_text}”
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="mb-3 text-lg font-black">Latest activity</h3>
+        <div className="grid gap-3">
+        {recentActivity.map((checkIn) => {
           const profile = profiles.find((item) => item.id === checkIn.profile_id);
           return (
             <div key={checkIn.id} className="rounded-[1.5rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
@@ -631,11 +765,12 @@ function HistoryView({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Pr
             </div>
           );
         })}
-        {checkIns.length === 0 ? (
+        {recentActivity.length === 0 ? (
           <p className="rounded-2xl bg-white p-4 text-sm font-medium text-slate-500 shadow-sm">
             No wins yet. The first tap gets the scoreboard moving.
           </p>
         ) : null}
+        </div>
       </div>
     </section>
   );

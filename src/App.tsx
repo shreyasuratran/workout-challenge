@@ -106,6 +106,11 @@ type ProofPhoto = {
   uploadedAt: string;
 };
 
+type ProofAdjustment = {
+  flip: boolean;
+  rotation: number;
+};
+
 const tabs: Tab[] = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'leaderboard', label: 'Race', icon: Trophy },
@@ -210,61 +215,7 @@ const vacationStatusText = (profile: Profile) => {
   return `${profile.name} is on vacation${until} 🌴`;
 };
 
-const readExifOrientation = async (file: File) => {
-  try {
-    const view = new DataView(await file.arrayBuffer());
-    if (view.getUint16(0, false) !== 0xffd8) return 1;
-
-    let offset = 2;
-    while (offset < view.byteLength) {
-      const marker = view.getUint16(offset, false);
-      offset += 2;
-
-      if (marker === 0xffda || marker === 0xffd9) break;
-      const segmentLength = view.getUint16(offset, false);
-      if (segmentLength < 2) break;
-
-      if (marker === 0xffe1) {
-        const segmentStart = offset + 2;
-        const hasExifHeader =
-          view.getUint32(segmentStart, false) === 0x45786966 && view.getUint16(segmentStart + 4, false) === 0;
-
-        if (hasExifHeader) {
-          const tiffOffset = segmentStart + 6;
-          const byteOrder = view.getUint16(tiffOffset, false);
-          const littleEndian = byteOrder === 0x4949;
-          const firstIfdOffset = view.getUint32(tiffOffset + 4, littleEndian);
-          const entriesOffset = tiffOffset + firstIfdOffset;
-          const entries = view.getUint16(entriesOffset, littleEndian);
-
-          for (let index = 0; index < entries; index += 1) {
-            const entryOffset = entriesOffset + 2 + index * 12;
-            const tag = view.getUint16(entryOffset, littleEndian);
-            if (tag === 0x0112) {
-              return view.getUint16(entryOffset + 8, littleEndian);
-            }
-          }
-        }
-      }
-
-      offset += segmentLength;
-    }
-  } catch {
-    return 1;
-  }
-
-  return 1;
-};
-
 const loadImageSource = async (file: File) => {
-  if ('createImageBitmap' in window) {
-    try {
-      return await createImageBitmap(file, { imageOrientation: 'none' });
-    } catch {
-      // Fall back to HTMLImageElement below for older mobile browsers.
-    }
-  }
-
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = document.createElement('img');
     const objectUrl = URL.createObjectURL(file);
@@ -283,48 +234,20 @@ const loadImageSource = async (file: File) => {
   });
 };
 
-const applyExifTransform = (
-  context: CanvasRenderingContext2D,
-  orientation: number,
-  canvasWidth: number,
-  canvasHeight: number,
-) => {
-  switch (orientation) {
-    case 3:
-      context.transform(-1, 0, 0, -1, canvasWidth, canvasHeight);
-      break;
-    case 6:
-      context.transform(0, 1, -1, 0, canvasWidth, 0);
-      break;
-    case 8:
-      context.transform(0, -1, 1, 0, 0, canvasHeight);
-      break;
-    default:
-      break;
+const normalizeRotation = (rotation: number) => ((rotation % 360) + 360) % 360;
+
+const closeImageSource = (image: CanvasImageSource) => {
+  if (image instanceof ImageBitmap) {
+    image.close();
   }
 };
 
-const removeExifMirroring = (orientation: number) => {
-  switch (orientation) {
-    case 2:
-      return 1;
-    case 4:
-      return 3;
-    case 5:
-      return 6;
-    case 7:
-      return 8;
-    default:
-      return orientation;
-  }
-};
-
-const compressProofImage = async (file: File, shouldFlipHorizontally = false) => {
-  const orientation = removeExifMirroring(await readExifOrientation(file));
+const compressProofImage = async (file: File, adjustment: ProofAdjustment = { flip: false, rotation: 0 }) => {
   const image = await loadImageSource(file);
   const rawWidth = image.width;
   const rawHeight = image.height;
-  const swapsDimensions = orientation >= 5 && orientation <= 8;
+  const rotation = normalizeRotation(adjustment.rotation);
+  const swapsDimensions = rotation === 90 || rotation === 270;
   const orientedWidth = swapsDimensions ? rawHeight : rawWidth;
   const orientedHeight = swapsDimensions ? rawWidth : rawHeight;
   const scale = Math.min(1200 / orientedWidth, 1);
@@ -332,35 +255,27 @@ const compressProofImage = async (file: File, shouldFlipHorizontally = false) =>
   const canvasHeight = Math.round(orientedHeight * scale);
   const drawWidth = Math.round(rawWidth * scale);
   const drawHeight = Math.round(rawHeight * scale);
-  const orientedCanvas = document.createElement('canvas');
-  orientedCanvas.width = canvasWidth;
-  orientedCanvas.height = canvasHeight;
-  const context = orientedCanvas.getContext('2d');
-
-  if (!context) {
-    if ('close' in image) image.close();
-    throw new Error('Could not prepare image');
-  }
-
-  applyExifTransform(context, orientation, canvasWidth, canvasHeight);
-  context.drawImage(image, 0, 0, drawWidth, drawHeight);
-  if ('close' in image) image.close();
-
   const canvas = document.createElement('canvas');
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
-  const outputContext = canvas.getContext('2d');
+  const context = canvas.getContext('2d');
 
-  if (!outputContext) {
+  if (!context) {
+    closeImageSource(image);
     throw new Error('Could not prepare image');
   }
 
-  if (shouldFlipHorizontally) {
-    outputContext.translate(canvasWidth, 0);
-    outputContext.scale(-1, 1);
+  context.save();
+  context.translate(canvasWidth / 2, canvasHeight / 2);
+  context.rotate((rotation * Math.PI) / 180);
+
+  if (adjustment.flip) {
+    context.scale(-1, 1);
   }
 
-  outputContext.drawImage(orientedCanvas, 0, 0);
+  context.drawImage(image, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+  context.restore();
+  closeImageSource(image);
 
   return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
@@ -389,7 +304,7 @@ function App() {
   const [noteText, setNoteText] = useState('');
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [processedProofBlob, setProcessedProofBlob] = useState<Blob | null>(null);
-  const [isProofFlipped, setIsProofFlipped] = useState(false);
+  const [proofAdjustment, setProofAdjustment] = useState<ProofAdjustment>({ flip: false, rotation: 0 });
   const [isProcessingProof, setIsProcessingProof] = useState(false);
   const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
@@ -537,10 +452,10 @@ function App() {
     setProofPreviewUrl(blob ? URL.createObjectURL(blob) : null);
   };
 
-  const processProofFile = async (file: File, shouldFlipHorizontally: boolean) => {
+  const processProofFile = async (file: File, adjustment: ProofAdjustment) => {
     setIsProcessingProof(true);
     try {
-      const blob = await compressProofImage(file, shouldFlipHorizontally);
+      const blob = await compressProofImage(file, adjustment);
       setProcessedProofPreview(blob);
     } catch {
       setError('Could not prepare that photo. You can still check in without it.');
@@ -552,22 +467,30 @@ function App() {
 
   const selectProofFile = (file: File | null) => {
     setProofFile(file);
-    setIsProofFlipped(false);
+    setProofAdjustment({ flip: false, rotation: 0 });
 
     if (!file) {
       setProcessedProofPreview(null);
       return;
     }
 
-    void processProofFile(file, false);
+    void processProofFile(file, { flip: false, rotation: 0 });
   };
 
   const flipProofPhoto = () => {
     if (!proofFile || isProcessingProof) return;
 
-    const nextFlip = !isProofFlipped;
-    setIsProofFlipped(nextFlip);
-    void processProofFile(proofFile, nextFlip);
+    const nextAdjustment = { ...proofAdjustment, flip: !proofAdjustment.flip };
+    setProofAdjustment(nextAdjustment);
+    void processProofFile(proofFile, nextAdjustment);
+  };
+
+  const rotateProofPhoto = () => {
+    if (!proofFile || isProcessingProof) return;
+
+    const nextAdjustment = { ...proofAdjustment, rotation: normalizeRotation(proofAdjustment.rotation + 90) };
+    setProofAdjustment(nextAdjustment);
+    void processProofFile(proofFile, nextAdjustment);
   };
 
   const uploadProofPhoto = async (profileId: string): Promise<ProofPhoto | null> => {
@@ -635,7 +558,7 @@ function App() {
       setCheckIns((existing) => [result.data as CheckIn, ...existing]);
       setNoteText('');
       selectProofFile(null);
-      setIsProofFlipped(false);
+      setProofAdjustment({ flip: false, rotation: 0 });
     }
     setIsSaving(false);
   };
@@ -753,7 +676,6 @@ function App() {
                 hasCheckedInToday={hasCheckedInToday}
                 isSaving={isSaving}
                 isProcessingProof={isProcessingProof}
-                isProofFlipped={isProofFlipped}
                 noteText={noteText}
                 onCheckIn={checkInToday}
                 onFlipProofPhoto={flipProofPhoto}
@@ -761,7 +683,9 @@ function App() {
                 onPhotoPreview={setPhotoPreviewUrl}
                 onProofFileChange={selectProofFile}
                 onRemoveTodayPhoto={removeTodayPhoto}
+                onRotateProofPhoto={rotateProofPhoto}
                 onUndo={undoToday}
+                proofAdjustment={proofAdjustment}
                 proofPreviewUrl={proofPreviewUrl}
                 recentCheckIns={recentCheckIns.slice(0, 10)}
                 selectedProfile={selectedProfile}
@@ -858,7 +782,6 @@ function HomeView({
   hasCheckedInToday,
   isSaving,
   isProcessingProof,
-  isProofFlipped,
   noteText,
   onCheckIn,
   onFlipProofPhoto,
@@ -866,7 +789,9 @@ function HomeView({
   onPhotoPreview,
   onProofFileChange,
   onRemoveTodayPhoto,
+  onRotateProofPhoto,
   onUndo,
+  proofAdjustment,
   proofPreviewUrl,
   recentCheckIns,
   selectedProfile,
@@ -877,7 +802,6 @@ function HomeView({
   hasCheckedInToday: boolean;
   isSaving: boolean;
   isProcessingProof: boolean;
-  isProofFlipped: boolean;
   noteText: string;
   onCheckIn: () => void;
   onFlipProofPhoto: () => void;
@@ -885,7 +809,9 @@ function HomeView({
   onPhotoPreview: (photoUrl: string) => void;
   onProofFileChange: (file: File | null) => void;
   onRemoveTodayPhoto: () => void;
+  onRotateProofPhoto: () => void;
   onUndo: () => void;
+  proofAdjustment: ProofAdjustment;
   proofPreviewUrl: string | null;
   recentCheckIns: CheckIn[];
   selectedProfile: Profile;
@@ -951,11 +877,20 @@ function HomeView({
                     <button
                       className="flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700 disabled:opacity-60"
                       disabled={isProcessingProof}
-                      onClick={onFlipProofPhoto}
+                      onClick={onRotateProofPhoto}
                       type="button"
                     >
                       <RotateCcw className="h-4 w-4" />
-                      {isProofFlipped ? 'Undo flip' : 'Flip photo'}
+                      Rotate
+                    </button>
+                    <button
+                      className="flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700 disabled:opacity-60"
+                      disabled={isProcessingProof}
+                      onClick={onFlipProofPhoto}
+                      type="button"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      {proofAdjustment.flip ? 'Undo flip' : 'Flip'}
                     </button>
                     <button
                       className="flex min-h-10 items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700"
@@ -973,17 +908,29 @@ function HomeView({
                   Preparing preview
                 </div>
               ) : (
-                <label className="mt-2 flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-950 shadow-sm">
-                  <Image className="h-4 w-4" />
-                  Add proof photo
-                  <input
-                    accept="image/*"
-                    capture="environment"
-                    className="sr-only"
-                    onChange={(event) => onProofFileChange(event.target.files?.[0] ?? null)}
-                    type="file"
-                  />
-                </label>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-2 text-sm font-black text-slate-950 shadow-sm">
+                    <Image className="h-4 w-4" />
+                    Take photo
+                    <input
+                      accept="image/*"
+                      capture="environment"
+                      className="sr-only"
+                      onChange={(event) => onProofFileChange(event.target.files?.[0] ?? null)}
+                      type="file"
+                    />
+                  </label>
+                  <label className="flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-2 text-sm font-black text-slate-950 shadow-sm">
+                    <Image className="h-4 w-4" />
+                    Library
+                    <input
+                      accept="image/*"
+                      className="sr-only"
+                      onChange={(event) => onProofFileChange(event.target.files?.[0] ?? null)}
+                      type="file"
+                    />
+                  </label>
+                </div>
               )}
             </div>
           </div>

@@ -1,12 +1,12 @@
 # Workout Challenge
 
-A private mobile-first workout challenge app for Shreya, Aditi, and Thaanvi.
+A private mobile-first workout challenge app for Shreya and friends
 
 Built with React, Vite, TypeScript, Tailwind CSS, Supabase, date-fns, and lucide-react.
 
 ## Features
 
-- Profile picker for Shreya, Aditi, and Thaanvi
+- Profile picker for personal friends
 - Selected profile saved in `localStorage`
 - Daily workout check-in
 - One check-in per person per day

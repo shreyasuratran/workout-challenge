@@ -36,6 +36,7 @@ import type { CheckIn, Profile, View } from './types';
 
 const SELECTED_PROFILE_KEY = 'workout-challenge-selected-profile-id';
 const NOTE_LIMIT = 120;
+const VACATION_NOTE_LIMIT = 100;
 
 const avatarPresets = [
   { label: 'Bunny', emoji: '🐰' },
@@ -109,17 +110,15 @@ const themeStyles: Record<
     text: string;
     ring: string;
     bar: string;
-    dot: string;
   }
 > = {
   strawberry: {
-    shell: 'from-rose-100 via-orange-50 to-pink-100',
-    soft: 'bg-rose-100',
-    strong: 'bg-rose-500',
-    text: 'text-rose-700',
-    ring: 'ring-rose-200',
-    bar: 'bg-rose-500',
-    dot: 'bg-rose-300',
+    shell: 'from-pink-200 via-rose-50 to-fuchsia-100',
+    soft: 'bg-pink-100',
+    strong: 'bg-pink-500',
+    text: 'text-pink-700',
+    ring: 'ring-pink-200',
+    bar: 'bg-pink-500',
   },
   peach: {
     shell: 'from-orange-100 via-amber-50 to-pink-100',
@@ -128,7 +127,6 @@ const themeStyles: Record<
     text: 'text-orange-700',
     ring: 'ring-orange-200',
     bar: 'bg-orange-400',
-    dot: 'bg-orange-300',
   },
   lavender: {
     shell: 'from-violet-100 via-fuchsia-50 to-rose-50',
@@ -137,7 +135,6 @@ const themeStyles: Record<
     text: 'text-violet-700',
     ring: 'ring-violet-200',
     bar: 'bg-violet-500',
-    dot: 'bg-violet-300',
   },
   mint: {
     shell: 'from-emerald-100 via-teal-50 to-lime-50',
@@ -146,7 +143,6 @@ const themeStyles: Record<
     text: 'text-emerald-700',
     ring: 'ring-emerald-200',
     bar: 'bg-emerald-500',
-    dot: 'bg-emerald-300',
   },
   sky: {
     shell: 'from-sky-100 via-cyan-50 to-indigo-50',
@@ -155,7 +151,6 @@ const themeStyles: Record<
     text: 'text-sky-700',
     ring: 'ring-sky-200',
     bar: 'bg-sky-500',
-    dot: 'bg-sky-300',
   },
   lemon: {
     shell: 'from-yellow-100 via-amber-50 to-lime-50',
@@ -164,7 +159,6 @@ const themeStyles: Record<
     text: 'text-yellow-800',
     ring: 'ring-yellow-200',
     bar: 'bg-yellow-400',
-    dot: 'bg-yellow-300',
   },
 };
 
@@ -185,6 +179,23 @@ const describeDay = (dateKey: string) => {
   if (diff === 0) return 'today';
   if (diff === 1) return 'yesterday';
   return format(parseISO(dateKey), 'MMM d');
+};
+
+const isVacationActive = (profile: Profile, dateKey = todayKey()) => {
+  if (!profile.vacation_mode) return false;
+  return !profile.vacation_until || profile.vacation_until >= dateKey;
+};
+
+const isVacationDay = (profile: Profile, dateKey: string) => {
+  if (!isVacationActive(profile)) return false;
+  if (dateKey < todayKey()) return false;
+  return !profile.vacation_until || dateKey <= profile.vacation_until;
+};
+
+const vacationStatusText = (profile: Profile) => {
+  if (!isVacationActive(profile)) return null;
+  const until = profile.vacation_until ? ` until ${format(parseISO(profile.vacation_until), 'MMM d')}` : '';
+  return `${profile.name} is on vacation${until} 🌴`;
 };
 
 function App() {
@@ -331,7 +342,12 @@ function App() {
     setIsSaving(false);
   };
 
-  const updateProfile = async (profileId: string, updates: Partial<Pick<Profile, 'weekly_goal' | 'avatar_emoji' | 'theme_color'>>) => {
+  const updateProfile = async (
+    profileId: string,
+    updates: Partial<
+      Pick<Profile, 'weekly_goal' | 'avatar_emoji' | 'theme_color' | 'vacation_mode' | 'vacation_note' | 'vacation_until'>
+    >,
+  ) => {
     if (!supabase) return;
 
     setError(null);
@@ -363,10 +379,14 @@ function App() {
 
   return (
     <main className={`min-h-screen bg-gradient-to-br ${activeTheme.shell} pb-28 text-slate-950`}>
-      <div className="pointer-events-none fixed inset-x-0 top-0 mx-auto h-52 max-w-md overflow-hidden">
-        <div className={`absolute -left-8 top-10 h-20 w-20 rounded-full ${activeTheme.dot} opacity-40 blur-sm`} />
-        <div className="absolute right-6 top-8 h-8 w-8 rotate-12 rounded-md bg-white/70" />
-        <div className="absolute right-20 top-28 h-4 w-14 -rotate-6 rounded-full bg-white/60" />
+      <div className="pointer-events-none fixed inset-x-0 top-0 mx-auto h-48 max-w-md overflow-hidden">
+        <div className="absolute left-4 top-8 rotate-[-8deg] rounded-2xl border border-white/80 bg-white/45 px-3 py-1 text-xs font-black text-slate-400 shadow-sm">
+          ✦ mini wins
+        </div>
+        <div className="absolute right-5 top-10 rotate-6 rounded-full border border-white/80 bg-white/60 px-3 py-1 text-xs font-black text-slate-400 shadow-sm">
+          streak club
+        </div>
+        <div className="absolute left-16 top-28 h-2 w-24 -rotate-3 rounded-full bg-white/55" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-6 pt-5">
@@ -445,17 +465,18 @@ function MissingConfig() {
 function ProfilePicker({ profiles, onPick }: { profiles: Profile[]; onPick: (profileId: string) => void }) {
   return (
     <section className="mt-4">
-      <div className="rounded-[2rem] bg-white/90 p-5 shadow-soft ring-1 ring-white">
+      <div className="rounded-[2rem] border border-white/80 bg-white/90 p-5 shadow-soft ring-1 ring-pink-100/60">
         <div className="flex -space-x-3">
           {profiles.map((profile) => (
             <AvatarBubble key={profile.id} profile={profile} size="md" />
           ))}
         </div>
         <h2 className="mt-5 text-2xl font-black">Pick your player</h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">Three friends. One tiny scoreboard. Big main character energy.</p>
+        <p className="mt-2 text-sm leading-6 text-slate-600">Three friends. One soft little scoreboard.</p>
         <div className="mt-5 grid gap-3">
           {profiles.map((profile) => {
             const theme = getTheme(profile);
+            const vacation = vacationStatusText(profile);
             return (
               <button
                 key={profile.id}
@@ -463,7 +484,10 @@ function ProfilePicker({ profiles, onPick }: { profiles: Profile[]; onPick: (pro
                 onClick={() => onPick(profile.id)}
               >
                 <AvatarBubble profile={profile} size="sm" />
-                <span className="flex-1">{profile.name}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block">{profile.name}</span>
+                  {vacation ? <span className="mt-1 block text-xs font-bold text-slate-400">{vacation}</span> : null}
+                </span>
                 <span className={`rounded-full ${theme.soft} px-3 py-1 text-xs ${theme.text}`}>
                   {profile.weekly_goal}/week
                 </span>
@@ -511,13 +535,21 @@ function HomeView({
 
   return (
     <div className="grid gap-5">
-      <section className="relative overflow-hidden rounded-[2rem] bg-slate-950 p-5 text-white shadow-soft">
-        <div className={`absolute -right-10 -top-10 h-36 w-36 rounded-full ${theme.strong} opacity-30`} />
+      <section className="relative overflow-hidden rounded-[2rem] border border-white/15 bg-slate-950 p-5 text-white shadow-soft">
+        <div className={`absolute right-4 top-4 rounded-full ${theme.strong} px-3 py-1 text-xs font-black text-white shadow-sm`}>
+          ✦ today
+        </div>
+        <div className="absolute -bottom-1 left-5 h-2 w-24 rotate-[-2deg] rounded-full bg-white/15" />
         <div className="relative flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-bold text-white/70">{format(parseISO(today), 'EEEE, MMM d')}</p>
             <h2 className="mt-1 text-2xl font-black">Daily Mission</h2>
             <p className="mt-2 max-w-[13rem] text-sm leading-6 text-white/75">{dailyChallengeFor(today)}</p>
+            {vacationStatusText(selectedProfile) ? (
+              <p className="mt-3 inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/80">
+                {vacationStatusText(selectedProfile)}
+              </p>
+            ) : null}
           </div>
           <div className="rounded-[1.7rem] bg-white p-2 shadow-lg">
             <AvatarBubble profile={selectedProfile} size="lg" />
@@ -593,8 +625,10 @@ function LeaderboardView({ leaderboard, week }: { leaderboard: ChallengeStat[]; 
         {leaderboard.map(({ profile, weeklyCount, streak }, index) => {
           const theme = getTheme(profile);
           return (
-            <div key={profile.id} className="relative overflow-hidden rounded-[1.75rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
-              <div className={`absolute right-4 top-4 h-16 w-16 rounded-full ${theme.soft} opacity-60`} />
+            <div key={profile.id} className="relative overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
+              <div className={`absolute right-4 top-4 rotate-6 rounded-full ${theme.soft} px-3 py-1 text-xs font-black ${theme.text} opacity-80`}>
+                {index === 0 ? 'lead' : `${weeklyCount}/${profile.weekly_goal}`}
+              </div>
               <div className="relative flex items-center gap-3">
                 <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl font-black ${index === 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-slate-100 text-slate-600'}`}>
                   {index === 0 ? <Crown className="h-6 w-6" /> : index + 1}
@@ -602,6 +636,9 @@ function LeaderboardView({ leaderboard, week }: { leaderboard: ChallengeStat[]; 
                 <AvatarBubble profile={profile} size="sm" />
                 <div className="min-w-0 flex-1">
                   <p className="font-black">{profile.name}</p>
+                  {vacationStatusText(profile) ? (
+                    <p className="mt-0.5 text-xs font-bold text-slate-400">{vacationStatusText(profile)}</p>
+                  ) : null}
                   <div className="mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
                     <div className={`h-full rounded-full ${theme.bar}`} style={{ width: `${Math.min((weeklyCount / Math.max(profile.weekly_goal, 1)) * 100, 100)}%` }} />
                   </div>
@@ -644,6 +681,7 @@ function HistoryView({
       .slice(0, 24);
   }, [checkIns]);
   const selectedCheckIn = selectedUserCheckIns.find((checkIn) => isSameDay(parseISO(checkIn.check_in_date), selectedDate));
+  const selectedVacation = isVacationDay(selectedProfile, format(selectedDate, 'yyyy-MM-dd'));
   const monthDays = useMemo(() => {
     return eachDayOfInterval({
       start: startOfWeek(startOfMonth(visibleMonth), { weekStartsOn: 0 }),
@@ -658,7 +696,13 @@ function HistoryView({
         <h2 className="text-3xl font-black">Workout history</h2>
       </div>
 
-      <div className="rounded-[2rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+      {vacationStatusText(selectedProfile) ? (
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/85 px-4 py-3 text-sm font-black text-emerald-700 shadow-sm">
+          {vacationStatusText(selectedProfile)}
+        </div>
+      ) : null}
+
+      <div className="rounded-[2rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <AvatarBubble profile={selectedProfile} size="sm" />
@@ -696,6 +740,7 @@ function HistoryView({
             const dayKey = format(day, 'yyyy-MM-dd');
             const checkIn = selectedUserCheckIns.find((item) => item.check_in_date === dayKey);
             const hasNote = Boolean(checkIn?.note_text?.trim());
+            const vacationDay = isVacationDay(selectedProfile, dayKey);
             const isCurrentMonth = isSameMonth(day, visibleMonth);
             const isSelected = isSameDay(day, selectedDate);
             return (
@@ -720,6 +765,11 @@ function HistoryView({
                     aria-hidden="true"
                   />
                 ) : null}
+                {vacationDay && !checkIn ? (
+                  <span className="absolute bottom-0.5 text-[10px] leading-none" aria-hidden="true">
+                    🌴
+                  </span>
+                ) : null}
               </button>
             );
           })}
@@ -730,7 +780,11 @@ function HistoryView({
             {format(selectedDate, 'EEEE, MMM d')}
           </p>
           <p className="mt-1 font-black text-slate-950">
-            {selectedCheckIn ? `${selectedProfile.name} logged a workout.` : 'No workout logged for this day.'}
+            {selectedCheckIn
+              ? `${selectedProfile.name} logged a workout.`
+              : selectedVacation
+                ? `${selectedProfile.name} is on vacation 🌴`
+                : 'No workout logged for this day.'}
           </p>
           {selectedCheckIn?.note_text ? (
             <p className="mt-2 rounded-2xl bg-white/80 px-3 py-2 text-sm font-semibold text-slate-600">
@@ -746,7 +800,7 @@ function HistoryView({
         {recentActivity.map((checkIn) => {
           const profile = profiles.find((item) => item.id === checkIn.profile_id);
           return (
-            <div key={checkIn.id} className="rounded-[1.5rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+            <div key={checkIn.id} className="rounded-[1.5rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-3">
                   {profile ? <AvatarBubble profile={profile} size="sm" /> : <div className="h-11 w-11 rounded-2xl bg-slate-100" />}
@@ -785,9 +839,15 @@ function SettingsView({
   profiles: Profile[];
   selectedProfileId: string;
   onPickProfile: (profileId: string) => void;
-  onUpdateProfile: (profileId: string, updates: Partial<Pick<Profile, 'weekly_goal' | 'avatar_emoji' | 'theme_color'>>) => void;
+  onUpdateProfile: (
+    profileId: string,
+    updates: Partial<
+      Pick<Profile, 'weekly_goal' | 'avatar_emoji' | 'theme_color' | 'vacation_mode' | 'vacation_note' | 'vacation_until'>
+    >,
+  ) => void;
 }) {
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
+  const selectedTheme = getTheme(selectedProfile);
 
   return (
     <section className="grid gap-5">
@@ -797,7 +857,7 @@ function SettingsView({
       </div>
 
       {selectedProfile ? (
-        <div className="rounded-[2rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+        <div className="rounded-[2rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-pink-100/60">
           <div className="flex items-center gap-3">
             <AvatarBubble profile={selectedProfile} size="md" />
             <div>
@@ -839,13 +899,93 @@ function SettingsView({
         </div>
       ) : null}
 
+      {selectedProfile ? (
+        <div className="rounded-[2rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">Vacation mode</p>
+              <p className="mt-1 text-sm font-semibold text-slate-500">Let friends know you are away.</p>
+            </div>
+            <button
+              className={`relative h-8 w-14 rounded-full p-1 transition ${
+                selectedProfile.vacation_mode ? selectedTheme.strong : 'bg-slate-200'
+              }`}
+              onClick={() =>
+                onUpdateProfile(selectedProfile.id, {
+                  vacation_mode: !selectedProfile.vacation_mode,
+                  vacation_note: selectedProfile.vacation_note?.slice(0, VACATION_NOTE_LIMIT) ?? null,
+                  vacation_until:
+                    !selectedProfile.vacation_mode &&
+                    selectedProfile.vacation_until &&
+                    selectedProfile.vacation_until < todayKey()
+                      ? null
+                      : selectedProfile.vacation_until,
+                })
+              }
+              aria-label="Toggle vacation mode"
+              aria-pressed={Boolean(selectedProfile.vacation_mode)}
+            >
+              <span
+                className={`block h-6 w-6 rounded-full bg-white shadow-sm transition ${
+                  selectedProfile.vacation_mode ? 'translate-x-6' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {selectedProfile.vacation_mode ? (
+            <div className="mt-4 grid gap-3">
+              <label>
+                <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-slate-400">Note</span>
+                <input
+                  className="min-h-12 w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 text-sm font-semibold text-slate-700 outline-none focus:border-pink-200"
+                  maxLength={VACATION_NOTE_LIMIT}
+                  onChange={(event) =>
+                    onUpdateProfile(selectedProfile.id, {
+                      vacation_note: event.target.value.slice(0, VACATION_NOTE_LIMIT) || null,
+                    })
+                  }
+                  placeholder="Traveling this week"
+                  value={selectedProfile.vacation_note ?? ''}
+                />
+                <span className="mt-1 block text-right text-[11px] font-semibold text-slate-400">
+                  {(selectedProfile.vacation_note ?? '').length}/{VACATION_NOTE_LIMIT}
+                </span>
+              </label>
+              <label>
+                <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-slate-400">Until</span>
+                <input
+                  className="min-h-12 w-full rounded-2xl border border-slate-100 bg-slate-50 px-4 text-sm font-semibold text-slate-700 outline-none focus:border-pink-200"
+                  onChange={(event) =>
+                    onUpdateProfile(selectedProfile.id, {
+                      vacation_until: event.target.value || null,
+                    })
+                  }
+                  type="date"
+                  value={selectedProfile.vacation_until ?? ''}
+                />
+              </label>
+              {vacationStatusText(selectedProfile) ? (
+                <p className={`rounded-2xl ${selectedTheme.soft} px-3 py-2 text-sm font-black ${selectedTheme.text}`}>
+                  {vacationStatusText(selectedProfile)}
+                </p>
+              ) : (
+                <p className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">
+                  Vacation mode is on, but the end date has passed.
+                </p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div>
         <h3 className="mb-3 text-sm font-black uppercase tracking-[0.14em] text-slate-500">Weekly goals</h3>
         <div className="grid gap-3">
           {profiles.map((profile) => {
             const theme = getTheme(profile);
             return (
-              <div key={profile.id} className="rounded-[1.5rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+              <div key={profile.id} className="rounded-[1.5rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <AvatarBubble profile={profile} size="xs" />
@@ -901,16 +1041,21 @@ function BoardCard({
   weeklyCount: number;
 }) {
   const theme = getTheme(profile);
+  const vacation = vacationStatusText(profile);
 
   return (
-    <div className="flex items-center justify-between rounded-[1.5rem] bg-white/90 p-4 shadow-sm ring-1 ring-white">
+    <div className="flex items-center justify-between rounded-[1.5rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
       <div className="flex min-w-0 items-center gap-3">
         <AvatarBubble profile={profile} size="sm" />
         <div className="min-w-0">
           <p className="font-black">{profile.name}</p>
-          <p className="mt-1 text-sm text-slate-500">
-            {streak} day streak · {weeklyCount}/{profile.weekly_goal} this week
-          </p>
+          {vacation ? (
+            <p className="mt-1 text-sm font-bold text-emerald-600">{vacation}</p>
+          ) : (
+            <p className="mt-1 text-sm text-slate-500">
+              {streak} day streak · {weeklyCount}/{profile.weekly_goal} this week
+            </p>
+          )}
         </div>
       </div>
       <div
@@ -936,15 +1081,16 @@ function BadgeShelf({ badges }: { badges: Badge[] }) {
         {badges.map((badge) => (
           <div
             key={badge.label}
-            className={`rounded-[1.4rem] p-3 shadow-sm ring-1 ring-white ${
-              badge.unlocked ? 'bg-white/95 text-slate-950' : 'bg-white/45 text-slate-400'
+            className={`relative overflow-hidden rounded-[1.4rem] border border-white/80 p-3 shadow-sm ring-1 ring-white ${
+              badge.unlocked ? 'bg-white/95 text-slate-950' : 'bg-white/55 text-slate-400'
             }`}
           >
-            <div className={`mb-2 grid h-10 w-10 place-items-center rounded-2xl text-lg ${badge.unlocked ? 'bg-yellow-100' : 'bg-slate-100 grayscale'}`}>
+            <div className="absolute right-3 top-2 rotate-6 text-xs font-black text-slate-200">★</div>
+            <div className={`mb-2 grid h-10 w-10 place-items-center rounded-2xl border border-white text-lg shadow-sm ${badge.unlocked ? 'bg-pink-100' : 'bg-slate-100 grayscale'}`}>
               {badge.icon}
             </div>
             <p className="text-sm font-black">{badge.label}</p>
-            <p className="mt-1 text-xs font-bold">{badge.unlocked ? 'Unlocked' : 'Locked'}</p>
+            <p className="mt-1 text-xs font-bold">{badge.unlocked ? 'Collected' : 'Locked'}</p>
           </div>
         ))}
       </div>
@@ -961,7 +1107,7 @@ function RecentWins({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Pro
           const profile = profiles.find((item) => item.id === checkIn.profile_id);
           const note = checkIn.note_text?.trim();
           return (
-            <div key={checkIn.id} className="flex items-start gap-3 rounded-[1.5rem] bg-white/80 p-3 shadow-sm ring-1 ring-white">
+            <div key={checkIn.id} className="flex items-start gap-3 rounded-[1.5rem] border border-white/80 bg-white/85 p-3 shadow-sm ring-1 ring-white">
               {profile ? <AvatarBubble profile={profile} size="xs" /> : null}
               <p className="min-w-0 flex-1 text-sm font-semibold leading-6 text-slate-600">
                 {note
@@ -972,7 +1118,9 @@ function RecentWins({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Pro
           );
         })}
         {checkIns.length === 0 ? (
-          <p className="rounded-2xl bg-white/80 p-4 text-sm font-semibold text-slate-500 shadow-sm">No wins yet.</p>
+          <p className="rounded-2xl border border-white/80 bg-white/85 p-4 text-sm font-semibold text-slate-500 shadow-sm">
+            Wins will land here after the first check-in.
+          </p>
         ) : null}
       </div>
     </section>

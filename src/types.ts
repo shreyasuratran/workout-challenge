@@ -6,6 +6,9 @@ export type Profile = {
   weekly_goal: number;
   avatar_emoji?: string | null;
   theme_color?: string | null;
+  vacation_mode?: boolean | null;
+  vacation_note?: string | null;
+  vacation_until?: string | null;
   created_at: string;
 };
 

@@ -6,6 +6,9 @@ create table if not exists public.profiles (
   weekly_goal integer not null default 4 check (weekly_goal between 1 and 7),
   avatar_emoji text not null default '🌸',
   theme_color text not null default 'strawberry',
+  vacation_mode boolean not null default false,
+  vacation_note text,
+  vacation_until date,
   created_at timestamptz not null default now()
 );
 
@@ -20,7 +23,10 @@ create table if not exists public.check_ins (
 
 alter table public.profiles
   add column if not exists avatar_emoji text not null default '🌸',
-  add column if not exists theme_color text not null default 'strawberry';
+  add column if not exists theme_color text not null default 'strawberry',
+  add column if not exists vacation_mode boolean not null default false,
+  add column if not exists vacation_note text,
+  add column if not exists vacation_until date;
 
 alter table public.check_ins
   add column if not exists note_text text;
@@ -44,6 +50,7 @@ create policy "Anyone can update weekly goals"
   with check (
     weekly_goal between 1 and 7
     and theme_color in ('strawberry', 'peach', 'lavender', 'mint', 'sky', 'lemon')
+    and (vacation_note is null or char_length(vacation_note) <= 100)
   );
 
 drop policy if exists "Anyone can read check ins" on public.check_ins;

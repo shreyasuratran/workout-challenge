@@ -729,58 +729,57 @@ function HomeView({
 
   return (
     <div className="grid gap-5">
-      <section className="relative overflow-hidden rounded-[2rem] border border-white/15 bg-slate-950 p-5 text-white shadow-soft">
-        <div className={`absolute right-4 top-4 rounded-full ${theme.strong} px-3 py-1 text-xs font-black text-white shadow-sm`}>
-          ✦ today
-        </div>
-        <div className="absolute -bottom-1 left-5 h-2 w-24 rotate-[-2deg] rounded-full bg-white/15" />
-        <div className="relative flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-bold text-white/70">{format(parseISO(today), 'EEEE, MMM d')}</p>
-            <h2 className="mt-1 text-2xl font-black">Daily Mission</h2>
-            <p className="mt-2 max-w-[13rem] text-sm leading-6 text-white/75">{dailyChallengeFor(today)}</p>
+      <section className="relative overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/95 p-4 text-slate-950 shadow-soft ring-1 ring-white">
+        <div className={`absolute inset-x-4 top-0 h-1.5 rounded-b-full ${theme.strong}`} />
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <p className={`text-xs font-black uppercase tracking-[0.14em] ${theme.text}`}>
+              {format(parseISO(today), 'EEE, MMM d')}
+            </p>
+            <h2 className="mt-1 text-2xl font-black leading-tight">Daily Mission</h2>
+            <p className="mt-1 text-sm font-semibold leading-5 text-slate-600">{dailyChallengeFor(today)}</p>
             {vacationStatusText(selectedProfile) ? (
-              <p className="mt-3 inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-black text-white/80">
+              <p className={`mt-2 inline-flex rounded-full ${theme.soft} px-3 py-1 text-xs font-black ${theme.text}`}>
                 {vacationStatusText(selectedProfile)}
               </p>
             ) : null}
           </div>
-          <div className="rounded-[1.7rem] bg-white p-2 shadow-lg">
-            <AvatarBubble profile={selectedProfile} size="lg" />
+          <div className="shrink-0 rounded-3xl border border-white bg-white p-1 shadow-sm">
+            <AvatarBubble profile={selectedProfile} size="md" />
           </div>
         </div>
 
-        <div className="relative mt-5 grid grid-cols-2 gap-3">
-          <Metric label="Streak" value={`${selectedStats?.streak ?? 0}`} detail="days" />
-          <Metric label="This week" value={`${selectedStats?.weeklyCount ?? 0}/${selectedProfile.weekly_goal}`} detail="goal" />
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <MissionStat label="Streak" value={`${selectedStats?.streak ?? 0}`} detail="days" />
+          <MissionStat label="Week" value={`${selectedStats?.weeklyCount ?? 0}/${selectedProfile.weekly_goal}`} detail="goal" />
         </div>
 
         {!hasCheckedInToday ? (
-          <div className="relative mt-4 grid gap-3">
+          <div className="mt-3 grid gap-2">
             <label className="block">
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-white/60">Add a quick note?</span>
+              <span className="mb-1.5 block text-xs font-black uppercase tracking-[0.14em] text-slate-400">Add a quick note?</span>
               <input
-                className="min-h-12 w-full rounded-2xl border border-white/10 bg-white/10 px-4 text-sm font-semibold text-white placeholder:text-white/40 outline-none focus:border-white/40"
+                className="min-h-11 w-full rounded-2xl border border-pink-100 bg-pink-50/70 px-4 text-sm font-semibold text-slate-700 placeholder:text-slate-400 outline-none focus:border-pink-200"
                 maxLength={NOTE_LIMIT}
                 onChange={(event) => onNoteChange(event.target.value.slice(0, NOTE_LIMIT))}
                 placeholder="quick walk, yoga, lift..."
                 value={noteText}
               />
-              <span className="mt-1 block text-right text-[11px] font-semibold text-white/40">{noteText.length}/{NOTE_LIMIT}</span>
+              <span className="mt-1 block text-right text-[11px] font-semibold text-slate-400">{noteText.length}/{NOTE_LIMIT}</span>
             </label>
-            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
-              <p className="text-xs font-bold text-white/60">Proof photos are optional and may disappear after about 48 hours.</p>
+            <div className="rounded-2xl border border-pink-100 bg-pink-50/70 p-2.5">
+              <p className="text-xs font-bold text-slate-500">Proof photos are optional and may disappear after about 48 hours.</p>
               {proofPreviewUrl ? (
                 <div className="mt-3 flex items-center gap-3">
                   <button
-                    className="h-16 w-16 overflow-hidden rounded-2xl border border-white/20"
+                    className="h-14 w-14 overflow-hidden rounded-2xl border border-white"
                     onClick={() => onPhotoPreview(proofPreviewUrl)}
                     type="button"
                   >
                     <img alt="Selected proof preview" className="h-full w-full object-cover" src={proofPreviewUrl} />
                   </button>
                   <button
-                    className="flex min-h-10 items-center gap-2 rounded-2xl bg-white/10 px-3 text-sm font-black text-white"
+                    className="flex min-h-10 items-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-700"
                     onClick={() => onProofFileChange(null)}
                     type="button"
                   >
@@ -789,7 +788,7 @@ function HomeView({
                   </button>
                 </div>
               ) : (
-                <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-950 shadow-sm">
+                <label className="mt-2 flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-950 shadow-sm">
                   <Image className="h-4 w-4" />
                   Add proof photo
                   <input
@@ -806,7 +805,9 @@ function HomeView({
         ) : null}
 
         <button
-          className={`relative mt-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl ${hasCheckedInToday ? 'bg-white/10 text-white' : 'bg-white text-slate-950'} px-4 py-4 text-base font-black shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70`}
+          className={`mt-3 flex min-h-[52px] w-full items-center justify-center gap-2 rounded-2xl ${
+            hasCheckedInToday ? 'bg-slate-950 text-white' : `${theme.strong} text-white`
+          } px-4 py-3.5 text-base font-black shadow-sm transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70`}
           onClick={hasCheckedInToday ? onUndo : onCheckIn}
           disabled={isSaving}
         >
@@ -839,7 +840,7 @@ function HomeView({
       <BadgeShelf badges={badges} />
       {selectedStats?.todayCheckIn?.photo_url ? (
         <button
-          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/80 bg-white/85 px-4 text-sm font-black text-slate-700 shadow-sm"
+          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/80 bg-white/90 px-4 text-sm font-black text-slate-700 shadow-sm"
           onClick={onRemoveTodayPhoto}
         >
           <Trash2 className="h-4 w-4" />
@@ -868,28 +869,34 @@ function LeaderboardView({ leaderboard, week }: { leaderboard: ChallengeStat[]; 
       <div className="grid gap-3">
         {leaderboard.map(({ profile, weeklyCount, streak }, index) => {
           const theme = getTheme(profile);
+          const goalText = `${weeklyCount}/${profile.weekly_goal} goal`;
           return (
-            <div key={profile.id} className="relative overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/90 p-4 shadow-sm ring-1 ring-white">
-              <div className={`absolute right-4 top-4 rotate-6 rounded-full ${theme.soft} px-3 py-1 text-xs font-black ${theme.text} opacity-80`}>
-                {index === 0 ? 'lead' : `${weeklyCount}/${profile.weekly_goal}`}
-              </div>
-              <div className="relative flex items-center gap-3">
-                <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl font-black ${index === 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-slate-100 text-slate-600'}`}>
+            <div key={profile.id} className="overflow-hidden rounded-[1.5rem] border border-white/80 bg-white/90 p-3.5 shadow-sm ring-1 ring-white">
+              <div className="flex items-center gap-3">
+                <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl font-black ${index === 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-slate-100 text-slate-600'}`}>
                   {index === 0 ? <Crown className="h-6 w-6" /> : index + 1}
                 </div>
                 <AvatarBubble profile={profile} size="sm" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-black">{profile.name}</p>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="truncate font-black">{profile.name}</p>
+                    {index === 0 ? (
+                      <span className={`shrink-0 rounded-full ${theme.soft} px-2 py-0.5 text-[10px] font-black ${theme.text}`}>
+                        lead
+                      </span>
+                    ) : null}
+                  </div>
                   {vacationStatusText(profile) ? (
-                    <p className="mt-0.5 text-xs font-bold text-slate-400">{vacationStatusText(profile)}</p>
+                    <p className="mt-0.5 truncate text-xs font-bold text-slate-400">{vacationStatusText(profile)}</p>
                   ) : null}
-                  <div className="mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100">
                     <div className={`h-full rounded-full ${theme.bar}`} style={{ width: `${Math.min((weeklyCount / Math.max(profile.weekly_goal, 1)) * 100, 100)}%` }} />
                   </div>
+                  <p className={`mt-1 truncate text-[11px] font-black ${theme.text}`}>{goalText}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-2xl font-black">{weeklyCount}</p>
-                  <p className="text-xs font-semibold text-slate-500">{streak} streak</p>
+                <div className="w-14 shrink-0 text-right">
+                  <p className="text-2xl font-black leading-none tabular-nums">{weeklyCount}</p>
+                  <p className="mt-1 whitespace-nowrap text-[11px] font-semibold text-slate-500">{streak} streak</p>
                 </div>
               </div>
             </div>
@@ -943,7 +950,7 @@ function HistoryView({
       </div>
 
       {vacationStatusText(selectedProfile) ? (
-        <div className="rounded-[1.5rem] border border-white/80 bg-white/85 px-4 py-3 text-sm font-black text-emerald-700 shadow-sm">
+        <div className="rounded-[1.5rem] border border-white/80 bg-white/90 px-4 py-3 text-sm font-black text-emerald-700 shadow-sm">
           {vacationStatusText(selectedProfile)}
         </div>
       ) : null}
@@ -1389,7 +1396,7 @@ function RecentWins({
           const profile = profiles.find((item) => item.id === checkIn.profile_id);
           const note = checkIn.note_text?.trim();
           return (
-            <div key={checkIn.id} className="flex items-start gap-3 rounded-[1.5rem] border border-white/80 bg-white/85 p-3 shadow-sm ring-1 ring-white">
+            <div key={checkIn.id} className="flex items-start gap-3 rounded-[1.5rem] border border-white/80 bg-white/90 p-3 shadow-sm ring-1 ring-white">
               {profile ? <AvatarBubble profile={profile} size="xs" /> : null}
               <p className="min-w-0 flex-1 text-sm font-semibold leading-6 text-slate-600">
                 {note
@@ -1409,7 +1416,7 @@ function RecentWins({
           );
         })}
         {checkIns.length === 0 ? (
-          <p className="rounded-2xl border border-white/80 bg-white/85 p-4 text-sm font-semibold text-slate-500 shadow-sm">
+          <p className="rounded-2xl border border-white/80 bg-white/90 p-4 text-sm font-semibold text-slate-500 shadow-sm">
             Wins will land here after the first check-in.
           </p>
         ) : null}
@@ -1418,12 +1425,12 @@ function RecentWins({
   );
 }
 
-function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+function MissionStat({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-2xl bg-white/10 p-3">
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/60">{label}</p>
-      <p className="mt-2 text-3xl font-black">{value}</p>
-      <p className="text-sm font-medium text-white/60">{detail}</p>
+    <div className="rounded-2xl border border-pink-100 bg-pink-50/70 p-3">
+      <p className="text-[11px] font-black uppercase tracking-[0.12em] text-slate-400">{label}</p>
+      <p className="mt-1 text-2xl font-black leading-none text-slate-950">{value}</p>
+      <p className="mt-0.5 text-xs font-bold text-slate-500">{detail}</p>
     </div>
   );
 }

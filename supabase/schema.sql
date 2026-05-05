@@ -17,6 +17,9 @@ create table if not exists public.check_ins (
   profile_id uuid not null references public.profiles(id) on delete cascade,
   check_in_date date not null,
   note_text text,
+  photo_url text,
+  photo_path text,
+  photo_uploaded_at timestamptz,
   created_at timestamptz not null default now(),
   unique (profile_id, check_in_date)
 );
@@ -29,7 +32,10 @@ alter table public.profiles
   add column if not exists vacation_until date;
 
 alter table public.check_ins
-  add column if not exists note_text text;
+  add column if not exists note_text text,
+  add column if not exists photo_url text,
+  add column if not exists photo_path text,
+  add column if not exists photo_uploaded_at timestamptz;
 
 alter table public.profiles enable row level security;
 alter table public.check_ins enable row level security;
@@ -73,6 +79,52 @@ create policy "Anyone can undo check ins from today"
   for delete
   to anon
   using (check_in_date = current_date);
+
+drop policy if exists "Anyone can update check in proof photos" on public.check_ins;
+create policy "Anyone can update check in proof photos"
+  on public.check_ins
+  for update
+  to anon
+  using (true)
+  with check (note_text is null or char_length(note_text) <= 120);
+
+-- Private friend app only: these storage policies allow anonymous read, upload,
+-- and delete in the workout-proofs bucket. This is convenient for a no-login app,
+-- but it is not appropriate for sensitive data or public apps.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'workout-proofs',
+  'workout-proofs',
+  true,
+  5242880,
+  array['image/jpeg', 'image/webp', 'image/png']
+)
+on conflict (id) do update
+set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Anyone can read workout proof photos" on storage.objects;
+create policy "Anyone can read workout proof photos"
+  on storage.objects
+  for select
+  to anon
+  using (bucket_id = 'workout-proofs');
+
+drop policy if exists "Anyone can upload workout proof photos" on storage.objects;
+create policy "Anyone can upload workout proof photos"
+  on storage.objects
+  for insert
+  to anon
+  with check (bucket_id = 'workout-proofs');
+
+drop policy if exists "Anyone can delete workout proof photos" on storage.objects;
+create policy "Anyone can delete workout proof photos"
+  on storage.objects
+  for delete
+  to anon
+  using (bucket_id = 'workout-proofs');
 
 insert into public.profiles (id, name, weekly_goal, avatar_emoji, theme_color)
 values

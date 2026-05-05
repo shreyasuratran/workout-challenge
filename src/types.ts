@@ -17,6 +17,9 @@ export type CheckIn = {
   profile_id: string;
   check_in_date: string;
   note_text?: string | null;
+  photo_url?: string | null;
+  photo_path?: string | null;
+  photo_uploaded_at?: string | null;
   created_at: string;
 };
 

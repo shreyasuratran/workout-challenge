@@ -5,14 +5,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Crown,
+  ExternalLink,
   Gift,
   History,
   Home,
+  Image,
   Loader2,
   RotateCcw,
   Settings,
   Sparkles,
+  Trash2,
   Trophy,
+  X,
 } from 'lucide-react';
 import {
   addMonths,
@@ -37,6 +41,8 @@ import type { CheckIn, Profile, View } from './types';
 const SELECTED_PROFILE_KEY = 'workout-challenge-selected-profile-id';
 const NOTE_LIMIT = 120;
 const VACATION_NOTE_LIMIT = 100;
+const PROOF_BUCKET = 'workout-proofs';
+const PROOF_EXPIRATION_HOURS = 48;
 
 const avatarPresets = [
   { label: 'Bunny', emoji: '🐰' },
@@ -92,6 +98,12 @@ type Tab = {
   id: View;
   label: string;
   icon: typeof Home;
+};
+
+type ProofPhoto = {
+  path: string;
+  url: string;
+  uploadedAt: string;
 };
 
 const tabs: Tab[] = [
@@ -198,6 +210,50 @@ const vacationStatusText = (profile: Profile) => {
   return `${profile.name} is on vacation${until} 🌴`;
 };
 
+const compressProofImage = (file: File) => {
+  return new Promise<Blob>((resolve, reject) => {
+    const image = document.createElement('img');
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      const scale = Math.min(1200 / image.width, 1);
+      const width = Math.round(image.width * scale);
+      const height = Math.round(image.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+
+      if (!context) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('Could not prepare image'));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(objectUrl);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Could not compress image'));
+          }
+        },
+        'image/jpeg',
+        0.82,
+      );
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not read image'));
+    };
+
+    image.src = objectUrl;
+  });
+};
+
 function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [checkIns, setCheckIns] = useState<CheckIn[]>([]);
@@ -208,12 +264,46 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? null;
   const activeTheme = getTheme(selectedProfile);
   const today = todayKey();
   const week = weekRange();
+
+  const cleanupOldProofPhotos = useCallback(async (loadedCheckIns: CheckIn[]) => {
+    if (!supabase) return;
+
+    const cutoff = Date.now() - PROOF_EXPIRATION_HOURS * 60 * 60 * 1000;
+    const expiredPhotos = loadedCheckIns.filter((checkIn) => {
+      if (!checkIn.photo_path || !checkIn.photo_uploaded_at) return false;
+      return new Date(checkIn.photo_uploaded_at).getTime() < cutoff;
+    });
+
+    if (expiredPhotos.length === 0) return;
+
+    try {
+      const paths = expiredPhotos.map((checkIn) => checkIn.photo_path!).filter(Boolean);
+      await supabase.storage.from(PROOF_BUCKET).remove(paths);
+      await supabase
+        .from('check_ins')
+        .update({ photo_url: null, photo_path: null, photo_uploaded_at: null })
+        .in('id', expiredPhotos.map((checkIn) => checkIn.id));
+
+      setCheckIns((existing) =>
+        existing.map((checkIn) =>
+          expiredPhotos.some((expired) => expired.id === checkIn.id)
+            ? { ...checkIn, photo_url: null, photo_path: null, photo_uploaded_at: null }
+            : checkIn,
+        ),
+      );
+    } catch {
+      // Best-effort cleanup only. Storage policy limits should never block the app.
+    }
+  }, []);
 
   const loadData = useCallback(async () => {
     if (!supabase) {
@@ -240,12 +330,14 @@ function App() {
     } else if (checkInsResult.error) {
       setError(checkInsResult.error.message);
     } else {
+      const nextCheckIns = (checkInsResult.data ?? []) as CheckIn[];
       setProfiles((profilesResult.data ?? []) as Profile[]);
-      setCheckIns((checkInsResult.data ?? []) as CheckIn[]);
+      setCheckIns(nextCheckIns);
+      void cleanupOldProofPhotos(nextCheckIns);
     }
 
     setIsLoading(false);
-  }, []);
+  }, [cleanupOldProofPhotos]);
 
   useEffect(() => {
     void loadData();
@@ -256,6 +348,14 @@ function App() {
       localStorage.setItem(SELECTED_PROFILE_KEY, selectedProfileId);
     }
   }, [selectedProfileId]);
+
+  useEffect(() => {
+    return () => {
+      if (proofPreviewUrl) {
+        URL.revokeObjectURL(proofPreviewUrl);
+      }
+    };
+  }, [proofPreviewUrl]);
 
   const checkInsByProfile = useMemo<ChallengeStat[]>(() => {
     return profiles.map((profile) => {
@@ -302,27 +402,81 @@ function App() {
     setView('home');
   };
 
+  const selectProofFile = (file: File | null) => {
+    if (proofPreviewUrl) {
+      URL.revokeObjectURL(proofPreviewUrl);
+    }
+
+    setProofFile(file);
+    setProofPreviewUrl(file ? URL.createObjectURL(file) : null);
+  };
+
+  const uploadProofPhoto = async (profileId: string): Promise<ProofPhoto | null> => {
+    if (!supabase || !proofFile) return null;
+
+    try {
+      const compressedPhoto = await compressProofImage(proofFile);
+      const timestamp = Date.now();
+      const path = `proofs/${profileId}/${today}-${timestamp}.jpg`;
+      const uploadResult = await supabase.storage.from(PROOF_BUCKET).upload(path, compressedPhoto, {
+        cacheControl: '3600',
+        contentType: 'image/jpeg',
+        upsert: false,
+      });
+
+      if (uploadResult.error) {
+        return null;
+      }
+
+      const publicUrl = supabase.storage.from(PROOF_BUCKET).getPublicUrl(path).data.publicUrl;
+      return {
+        path,
+        url: publicUrl,
+        uploadedAt: new Date().toISOString(),
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const checkInToday = async () => {
     if (!supabase || !selectedProfile || hasCheckedInToday) return;
 
     setIsSaving(true);
     setError(null);
+    const proofPhoto = await uploadProofPhoto(selectedProfile.id);
     const trimmedNote = noteText.trim().slice(0, NOTE_LIMIT);
-    const payload: { profile_id: string; check_in_date: string; note_text?: string } = {
+    const payload: {
+      profile_id: string;
+      check_in_date: string;
+      note_text?: string;
+      photo_url?: string;
+      photo_path?: string;
+      photo_uploaded_at?: string;
+    } = {
       profile_id: selectedProfile.id,
       check_in_date: today,
     };
     if (trimmedNote) {
       payload.note_text = trimmedNote;
     }
+    if (proofPhoto) {
+      payload.photo_url = proofPhoto.url;
+      payload.photo_path = proofPhoto.path;
+      payload.photo_uploaded_at = proofPhoto.uploadedAt;
+    }
 
     const result = await supabase.from('check_ins').insert(payload).select().single();
 
     if (result.error) {
       setError(result.error.message);
+      if (proofPhoto) {
+        void supabase.storage.from(PROOF_BUCKET).remove([proofPhoto.path]);
+      }
     } else {
       setCheckIns((existing) => [result.data as CheckIn, ...existing]);
       setNoteText('');
+      selectProofFile(null);
     }
     setIsSaving(false);
   };
@@ -340,6 +494,36 @@ function App() {
       setCheckIns((existing) => existing.filter((checkIn) => checkIn.id !== selectedStats.todayCheckIn?.id));
     }
     setIsSaving(false);
+  };
+
+  const removeTodayPhoto = async () => {
+    if (!supabase || !selectedStats?.todayCheckIn?.photo_path) return;
+
+    const checkIn = selectedStats.todayCheckIn;
+    const photoPath = checkIn.photo_path;
+    if (!photoPath) return;
+    setError(null);
+
+    try {
+      await supabase.storage.from(PROOF_BUCKET).remove([photoPath]);
+      const result = await supabase
+        .from('check_ins')
+        .update({ photo_url: null, photo_path: null, photo_uploaded_at: null })
+        .eq('id', checkIn.id);
+
+      if (result.error) {
+        setError(result.error.message);
+        return;
+      }
+
+      setCheckIns((existing) =>
+        existing.map((item) =>
+          item.id === checkIn.id ? { ...item, photo_url: null, photo_path: null, photo_uploaded_at: null } : item,
+        ),
+      );
+    } catch {
+      setError('Could not remove the photo. Try again in a moment.');
+    }
   };
 
   const updateProfile = async (
@@ -379,16 +563,6 @@ function App() {
 
   return (
     <main className={`min-h-screen bg-gradient-to-br ${activeTheme.shell} pb-28 text-slate-950`}>
-      <div className="pointer-events-none fixed inset-x-0 top-0 mx-auto h-48 max-w-md overflow-hidden">
-        <div className="absolute left-4 top-8 rotate-[-8deg] rounded-2xl border border-white/80 bg-white/45 px-3 py-1 text-xs font-black text-slate-400 shadow-sm">
-          ✦ mini wins
-        </div>
-        <div className="absolute right-5 top-10 rotate-6 rounded-full border border-white/80 bg-white/60 px-3 py-1 text-xs font-black text-slate-400 shadow-sm">
-          streak club
-        </div>
-        <div className="absolute left-16 top-28 h-2 w-24 -rotate-3 rounded-full bg-white/55" />
-      </div>
-
       <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col px-4 pb-6 pt-5">
         <header className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -422,7 +596,11 @@ function App() {
                 noteText={noteText}
                 onCheckIn={checkInToday}
                 onNoteChange={setNoteText}
+                onPhotoPreview={setPhotoPreviewUrl}
+                onProofFileChange={selectProofFile}
+                onRemoveTodayPhoto={removeTodayPhoto}
                 onUndo={undoToday}
+                proofPreviewUrl={proofPreviewUrl}
                 recentCheckIns={recentCheckIns.slice(0, 10)}
                 selectedProfile={selectedProfile}
                 selectedStats={selectedStats}
@@ -430,7 +608,14 @@ function App() {
               />
             ) : null}
             {view === 'leaderboard' ? <LeaderboardView leaderboard={leaderboard} week={week} /> : null}
-            {view === 'history' ? <HistoryView checkIns={checkIns} profiles={profiles} selectedProfile={selectedProfile} /> : null}
+            {view === 'history' ? (
+              <HistoryView
+                checkIns={checkIns}
+                onPhotoPreview={setPhotoPreviewUrl}
+                profiles={profiles}
+                selectedProfile={selectedProfile}
+              />
+            ) : null}
             {view === 'settings' ? (
               <SettingsView
                 profiles={profiles}
@@ -444,6 +629,7 @@ function App() {
       </div>
 
       {selectedProfile ? <BottomNav currentView={view} onChange={setView} /> : null}
+      {photoPreviewUrl ? <PhotoPreviewModal photoUrl={photoPreviewUrl} onClose={() => setPhotoPreviewUrl(null)} /> : null}
     </main>
   );
 }
@@ -512,7 +698,11 @@ function HomeView({
   noteText,
   onCheckIn,
   onNoteChange,
+  onPhotoPreview,
+  onProofFileChange,
+  onRemoveTodayPhoto,
   onUndo,
+  proofPreviewUrl,
   recentCheckIns,
   selectedProfile,
   selectedStats,
@@ -524,7 +714,11 @@ function HomeView({
   noteText: string;
   onCheckIn: () => void;
   onNoteChange: (note: string) => void;
+  onPhotoPreview: (photoUrl: string) => void;
+  onProofFileChange: (file: File | null) => void;
+  onRemoveTodayPhoto: () => void;
   onUndo: () => void;
+  proofPreviewUrl: string | null;
   recentCheckIns: CheckIn[];
   selectedProfile: Profile;
   selectedStats: ChallengeStat | undefined;
@@ -562,17 +756,53 @@ function HomeView({
         </div>
 
         {!hasCheckedInToday ? (
-          <label className="relative mt-4 block">
-            <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-white/60">Add a quick note?</span>
-            <input
-              className="min-h-12 w-full rounded-2xl border border-white/10 bg-white/10 px-4 text-sm font-semibold text-white placeholder:text-white/40 outline-none focus:border-white/40"
-              maxLength={NOTE_LIMIT}
-              onChange={(event) => onNoteChange(event.target.value.slice(0, NOTE_LIMIT))}
-              placeholder="quick walk, yoga, lift..."
-              value={noteText}
-            />
-            <span className="mt-1 block text-right text-[11px] font-semibold text-white/40">{noteText.length}/{NOTE_LIMIT}</span>
-          </label>
+          <div className="relative mt-4 grid gap-3">
+            <label className="block">
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.14em] text-white/60">Add a quick note?</span>
+              <input
+                className="min-h-12 w-full rounded-2xl border border-white/10 bg-white/10 px-4 text-sm font-semibold text-white placeholder:text-white/40 outline-none focus:border-white/40"
+                maxLength={NOTE_LIMIT}
+                onChange={(event) => onNoteChange(event.target.value.slice(0, NOTE_LIMIT))}
+                placeholder="quick walk, yoga, lift..."
+                value={noteText}
+              />
+              <span className="mt-1 block text-right text-[11px] font-semibold text-white/40">{noteText.length}/{NOTE_LIMIT}</span>
+            </label>
+            <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+              <p className="text-xs font-bold text-white/60">Proof photos are optional and may disappear after about 48 hours.</p>
+              {proofPreviewUrl ? (
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    className="h-16 w-16 overflow-hidden rounded-2xl border border-white/20"
+                    onClick={() => onPhotoPreview(proofPreviewUrl)}
+                    type="button"
+                  >
+                    <img alt="Selected proof preview" className="h-full w-full object-cover" src={proofPreviewUrl} />
+                  </button>
+                  <button
+                    className="flex min-h-10 items-center gap-2 rounded-2xl bg-white/10 px-3 text-sm font-black text-white"
+                    onClick={() => onProofFileChange(null)}
+                    type="button"
+                  >
+                    <X className="h-4 w-4" />
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-white px-3 text-sm font-black text-slate-950 shadow-sm">
+                  <Image className="h-4 w-4" />
+                  Add proof photo
+                  <input
+                    accept="image/*"
+                    capture="environment"
+                    className="sr-only"
+                    onChange={(event) => onProofFileChange(event.target.files?.[0] ?? null)}
+                    type="file"
+                  />
+                </label>
+              )}
+            </div>
+          </div>
         ) : null}
 
         <button
@@ -596,6 +826,7 @@ function HomeView({
           {checkInsByProfile.map(({ profile, todayCheckIn, streak, weeklyCount }) => (
             <BoardCard
               key={profile.id}
+              onPhotoPreview={onPhotoPreview}
               profile={profile}
               streak={streak}
               todayCheckIn={todayCheckIn}
@@ -606,7 +837,20 @@ function HomeView({
       </section>
 
       <BadgeShelf badges={badges} />
-      <RecentWins checkIns={recentCheckIns} profiles={checkInsByProfile.map((entry) => entry.profile)} />
+      {selectedStats?.todayCheckIn?.photo_url ? (
+        <button
+          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/80 bg-white/85 px-4 text-sm font-black text-slate-700 shadow-sm"
+          onClick={onRemoveTodayPhoto}
+        >
+          <Trash2 className="h-4 w-4" />
+          Remove today&apos;s proof photo
+        </button>
+      ) : null}
+      <RecentWins
+        checkIns={recentCheckIns}
+        onPhotoPreview={onPhotoPreview}
+        profiles={checkInsByProfile.map((entry) => entry.profile)}
+      />
     </div>
   );
 }
@@ -658,10 +902,12 @@ function LeaderboardView({ leaderboard, week }: { leaderboard: ChallengeStat[]; 
 
 function HistoryView({
   checkIns,
+  onPhotoPreview,
   profiles,
   selectedProfile,
 }: {
   checkIns: CheckIn[];
+  onPhotoPreview: (photoUrl: string) => void;
   profiles: Profile[];
   selectedProfile: Profile;
 }) {
@@ -791,6 +1037,14 @@ function HistoryView({
               “{selectedCheckIn.note_text}”
             </p>
           ) : null}
+          {selectedCheckIn?.photo_url ? (
+            <button
+              className="mt-3 h-24 w-24 overflow-hidden rounded-2xl border border-white/80 shadow-sm"
+              onClick={() => onPhotoPreview(selectedCheckIn.photo_url!)}
+            >
+              <img alt="Workout proof" className="h-full w-full object-cover" src={selectedCheckIn.photo_url} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -815,6 +1069,14 @@ function HistoryView({
                 <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-600">
                   “{checkIn.note_text}”
                 </p>
+              ) : null}
+              {checkIn.photo_url ? (
+                <button
+                  className="mt-3 h-20 w-20 overflow-hidden rounded-2xl border border-white shadow-sm"
+                  onClick={() => onPhotoPreview(checkIn.photo_url!)}
+                >
+                  <img alt="Workout proof" className="h-full w-full object-cover" src={checkIn.photo_url} />
+                </button>
               ) : null}
             </div>
           );
@@ -1030,11 +1292,13 @@ function SettingsView({
 }
 
 function BoardCard({
+  onPhotoPreview,
   profile,
   streak,
   todayCheckIn,
   weeklyCount,
 }: {
+  onPhotoPreview: (photoUrl: string) => void;
   profile: Profile;
   streak: number;
   todayCheckIn: CheckIn | undefined;
@@ -1058,14 +1322,24 @@ function BoardCard({
           )}
         </div>
       </div>
-      <div
-        className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${
-          todayCheckIn ? `${theme.soft} ${theme.text}` : 'bg-slate-100 text-slate-400'
-        }`}
-        aria-label={todayCheckIn ? 'Checked in today' : 'Not checked in today'}
-      >
-        {todayCheckIn ? <Check className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-      </div>
+      {todayCheckIn?.photo_url ? (
+        <button
+          className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white shadow-sm"
+          onClick={() => onPhotoPreview(todayCheckIn.photo_url!)}
+          aria-label="Open proof photo"
+        >
+          <img alt="Workout proof" className="h-full w-full object-cover" src={todayCheckIn.photo_url} />
+        </button>
+      ) : (
+        <div
+          className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${
+            todayCheckIn ? `${theme.soft} ${theme.text}` : 'bg-slate-100 text-slate-400'
+          }`}
+          aria-label={todayCheckIn ? 'Checked in today' : 'Not checked in today'}
+        >
+          {todayCheckIn ? <Check className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+        </div>
+      )}
     </div>
   );
 }
@@ -1098,7 +1372,15 @@ function BadgeShelf({ badges }: { badges: Badge[] }) {
   );
 }
 
-function RecentWins({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Profile[] }) {
+function RecentWins({
+  checkIns,
+  onPhotoPreview,
+  profiles,
+}: {
+  checkIns: CheckIn[];
+  onPhotoPreview: (photoUrl: string) => void;
+  profiles: Profile[];
+}) {
   return (
     <section>
       <h2 className="mb-3 text-lg font-black">Recent Wins</h2>
@@ -1114,6 +1396,15 @@ function RecentWins({ checkIns, profiles }: { checkIns: CheckIn[]; profiles: Pro
                   ? `${profile?.name ?? 'Friend'} added: “${note}”.`
                   : `${profile?.name ?? 'Friend'} ${describeDay(checkIn.check_in_date) === 'yesterday' ? 'logged a win yesterday' : `checked in ${describeDay(checkIn.check_in_date)}`}.`}
               </p>
+              {checkIn.photo_url ? (
+                <button
+                  className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white shadow-sm"
+                  onClick={() => onPhotoPreview(checkIn.photo_url!)}
+                  aria-label="Open proof photo"
+                >
+                  <img alt="Workout proof" className="h-full w-full object-cover" src={checkIn.photo_url} />
+                </button>
+              ) : null}
             </div>
           );
         })}
@@ -1149,6 +1440,38 @@ function AvatarBubble({ profile, size }: { profile: Profile; size: 'xs' | 'sm' |
   return (
     <div className={`grid shrink-0 place-items-center ${sizes[size]} ${theme.soft} ${theme.text} shadow-sm ring-2 ring-white`}>
       <span aria-hidden="true">{getAvatar(profile)}</span>
+    </div>
+  );
+}
+
+function PhotoPreviewModal({ photoUrl, onClose }: { photoUrl: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-20 grid place-items-center bg-slate-950/70 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-md rounded-[2rem] bg-white p-3 shadow-soft">
+        <div className="flex items-center justify-between gap-3 px-2 pb-3 pt-1">
+          <div>
+            <p className="text-sm font-black text-slate-950">Proof photo</p>
+            <p className="text-xs font-semibold text-slate-500">Open full photo to save it.</p>
+          </div>
+          <button
+            className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-100 text-slate-600"
+            onClick={onClose}
+            aria-label="Close photo preview"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <img alt="Workout proof preview" className="max-h-[70vh] w-full rounded-[1.5rem] object-contain" src={photoUrl} />
+        <a
+          className="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 text-sm font-black text-white"
+          href={photoUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <ExternalLink className="h-4 w-4" />
+          Open full photo
+        </a>
+      </section>
     </div>
   );
 }
